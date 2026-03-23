@@ -1,0 +1,663 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { Sky } from "@react-three/drei";
+
+const clamp = THREE.MathUtils.clamp;
+const lerp = THREE.MathUtils.lerp;
+
+function useKeyboardAndTouchState() {
+  const keysRef = useRef({
+    w: false,
+    a: false,
+    s: false,
+    d: false,
+    space: false,
+    c: false,
+    r: false,
+  });
+  const toggleRef = useRef({ camera: false });
+  const [, force] = useState(0);
+
+  useEffect(() => {
+    const down = (e) => {
+      const k = e.key.toLowerCase();
+      if (k === "w" || k === "arrowup") keysRef.current.w = true;
+      if (k === "a" || k === "arrowleft") keysRef.current.a = true;
+      if (k === "s" || k === "arrowdown") keysRef.current.s = true;
+      if (k === "d" || k === "arrowright") keysRef.current.d = true;
+      if (k === " ") keysRef.current.space = true;
+      if (k === "c") {
+        if (!toggleRef.current.camera) {
+          keysRef.current.c = true;
+          toggleRef.current.camera = true;
+          force((n) => n + 1);
+          setTimeout(() => {
+            keysRef.current.c = false;
+            toggleRef.current.camera = false;
+          }, 120);
+        }
+      }
+      if (k === "r") keysRef.current.r = true;
+    };
+    const up = (e) => {
+      const k = e.key.toLowerCase();
+      if (k === "w" || k === "arrowup") keysRef.current.w = false;
+      if (k === "a" || k === "arrowleft") keysRef.current.a = false;
+      if (k === "s" || k === "arrowdown") keysRef.current.s = false;
+      if (k === "d" || k === "arrowright") keysRef.current.d = false;
+      if (k === " ") keysRef.current.space = false;
+      if (k === "r") keysRef.current.r = false;
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  const bindButton = (name, value) => ({
+    onPointerDown: (e) => {
+      e.preventDefault();
+      keysRef.current[name] = value;
+    },
+    onPointerUp: (e) => {
+      e.preventDefault();
+      keysRef.current[name] = false;
+    },
+    onPointerLeave: (e) => {
+      e.preventDefault();
+      keysRef.current[name] = false;
+    },
+    onPointerCancel: (e) => {
+      e.preventDefault();
+      keysRef.current[name] = false;
+    },
+  });
+
+  return { keysRef, bindButton };
+}
+
+function terrainHeight(x, z) {
+  const hills =
+    Math.sin(x * 0.012) * 1.5 +
+    Math.cos(z * 0.01) * 1.2 +
+    Math.sin((x + z) * 0.005) * 1.0 +
+    Math.cos(Math.sqrt(x * x + z * z) * 0.008) * 0.9;
+  return hills * 0.55;
+}
+
+function RoadNetwork() {
+  const roadMat = useMemo(
+    () => ({ props: { color: "#1b1f27", roughness: 0.95, metalness: 0.02 } }),
+    []
+  );
+  const lineMat = useMemo(
+    () => ({ props: { color: "#f2d34f", roughness: 0.8, metalness: 0.05 } }),
+    []
+  );
+  const curbMat = useMemo(
+    () => ({ props: { color: "#515863", roughness: 1 } }),
+    []
+  );
+
+  const road = (x, y, z, sx, sy, sz, rotY = 0) => (
+    <group key={`${x}-${z}-${sx}-${sz}`} position={[x, y, z]} rotation={[0, rotY, 0]}>
+      <mesh receiveShadow castShadow>
+        <boxGeometry args={[sx, sy, sz]} />
+        <meshStandardMaterial attach="material" {...roadMat.props} />
+      </mesh>
+    </group>
+  );
+
+  const line = (x, y, z, sx, sy, sz, rotY = 0) => (
+    <group key={`l-${x}-${z}-${sx}-${sz}`} position={[x, y + 0.03, z]} rotation={[0, rotY, 0]}>
+      <mesh receiveShadow>
+        <boxGeometry args={[sx, sy, sz]} />
+        <meshStandardMaterial attach="material" {...lineMat.props} />
+      </mesh>
+    </group>
+  );
+
+  const curb = (x, y, z, sx, sy, sz, rotY = 0) => (
+    <group key={`c-${x}-${z}-${sx}-${sz}`} position={[x, y + 0.12, z]} rotation={[0, rotY, 0]}>
+      <mesh receiveShadow castShadow>
+        <boxGeometry args={[sx, sy, sz]} />
+        <meshStandardMaterial attach="material" {...curbMat.props} />
+      </mesh>
+    </group>
+  );
+
+  return (
+    <group>
+      {/* Main asphalt area */}
+      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]}>
+        <planeGeometry args={[1000, 1000, 1, 1]} />
+        <meshStandardMaterial color="#3a4a2f" roughness={1} />
+      </mesh>
+
+      {/* Road loop */}
+      {road(0, 0.01, -135, 320, 0.08, 26, 0)}
+      {road(0, 0.01, 135, 320, 0.08, 26, 0)}
+      {road(-135, 0.01, 0, 26, 0.08, 320, 0)}
+      {road(135, 0.01, 0, 26, 0.08, 320, 0)}
+
+      {/* Inner crossing */}
+      {road(0, 0.012, 0, 18, 0.08, 280, 0)}
+      {road(0, 0.012, 0, 280, 0.08, 18, 0)}
+
+      {/* Lane markings */}
+      {line(-120, 0.025, -135, 34, 0.02, 0.55, 0)}
+      {line(-60, 0.025, -135, 34, 0.02, 0.55, 0)}
+      {line(0, 0.025, -135, 34, 0.02, 0.55, 0)}
+      {line(60, 0.025, -135, 34, 0.02, 0.55, 0)}
+      {line(120, 0.025, -135, 34, 0.02, 0.55, 0)}
+      {line(-120, 0.025, 135, 34, 0.02, 0.55, 0)}
+      {line(-60, 0.025, 135, 34, 0.02, 0.55, 0)}
+      {line(0, 0.025, 135, 34, 0.02, 0.55, 0)}
+      {line(60, 0.025, 135, 34, 0.02, 0.55, 0)}
+      {line(120, 0.025, 135, 34, 0.02, 0.55, 0)}
+      {line(-135, 0.025, -120, 0.55, 0.02, 34, 0)}
+      {line(-135, 0.025, -60, 0.55, 0.02, 34, 0)}
+      {line(-135, 0.025, 0, 0.55, 0.02, 34, 0)}
+      {line(-135, 0.025, 60, 0.55, 0.02, 34, 0)}
+      {line(-135, 0.025, 120, 0.55, 0.02, 34, 0)}
+      {line(135, 0.025, -120, 0.55, 0.02, 34, 0)}
+      {line(135, 0.025, -60, 0.55, 0.02, 34, 0)}
+      {line(135, 0.025, 0, 0.55, 0.02, 34, 0)}
+      {line(135, 0.025, 60, 0.55, 0.02, 34, 0)}
+      {line(135, 0.025, 120, 0.55, 0.02, 34, 0)}
+
+      {/* Curbs */}
+      {curb(0, 0, -148, 320, 0.28, 1.2, 0)}
+      {curb(0, 0, 148, 320, 0.28, 1.2, 0)}
+      {curb(-148, 0, 0, 1.2, 0.28, 320, 0)}
+      {curb(148, 0, 0, 1.2, 0.28, 320, 0)}
+
+      {/* Crosswalk-like accents */}
+      {[...Array(8)].map((_, i) => (
+        <mesh key={`xw-${i}`} position={[-24 + i * 6, 0.026, 0]}>
+          <boxGeometry args={[2.4, 0.02, 9.5]} />
+          <meshStandardMaterial color="#f8f5ee" roughness={0.9} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function Props() {
+  const trees = useMemo(() => {
+    const arr = [];
+    for (let i = 0; i < 160; i++) {
+      const x = (Math.random() * 2 - 1) * 420;
+      const z = (Math.random() * 2 - 1) * 420;
+      const nearRoad = Math.min(Math.abs(x - 0), Math.abs(z - 0), Math.abs(Math.abs(x) - 135), Math.abs(Math.abs(z) - 135));
+      if (nearRoad < 32) continue;
+      arr.push({ x, z, s: 0.8 + Math.random() * 1.7, h: 4 + Math.random() * 6 });
+    }
+    return arr;
+  }, []);
+
+  const buildings = useMemo(() => {
+    const arr = [];
+    for (let i = 0; i < 50; i++) {
+      const side = i % 4;
+      let x = 0,
+        z = 0;
+      if (side === 0) {
+        x = -240 + Math.random() * 50;
+        z = -220 + Math.random() * 440;
+      }
+      if (side === 1) {
+        x = 190 + Math.random() * 70;
+        z = -220 + Math.random() * 440;
+      }
+      if (side === 2) {
+        x = -220 + Math.random() * 440;
+        z = -240 + Math.random() * 50;
+      }
+      if (side === 3) {
+        x = -220 + Math.random() * 440;
+        z = 190 + Math.random() * 70;
+      }
+      arr.push({ x, z, w: 10 + Math.random() * 18, d: 10 + Math.random() * 18, h: 8 + Math.random() * 36 });
+    }
+    return arr;
+  }, []);
+
+  const lamps = useMemo(() => {
+    const arr = [];
+    for (let i = -5; i <= 5; i++) {
+      arr.push({ x: i * 24, z: -140 });
+      arr.push({ x: i * 24, z: 140 });
+      arr.push({ x: -140, z: i * 24 });
+      arr.push({ x: 140, z: i * 24 });
+    }
+    return arr;
+  }, []);
+
+  return (
+    <group>
+      {trees.map((t, idx) => (
+        <group key={idx} position={[t.x, terrainHeight(t.x, t.z), t.z]}>
+          <mesh castShadow receiveShadow position={[0, t.h * 0.22, 0]}>
+            <cylinderGeometry args={[0.18 * t.s, 0.28 * t.s, t.h * 0.45, 10]} />
+            <meshStandardMaterial color="#6a4a2f" roughness={1} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, t.h * 0.72, 0]}>
+            <coneGeometry args={[1.2 * t.s, t.h * 0.95, 8]} />
+            <meshStandardMaterial color="#2d6b3e" roughness={1} />
+          </mesh>
+        </group>
+      ))}
+
+      {buildings.map((b, idx) => (
+        <group key={`b-${idx}`} position={[b.x, terrainHeight(b.x, b.z), b.z]}>
+          <mesh castShadow receiveShadow position={[0, b.h / 2, 0]}>
+            <boxGeometry args={[b.w, b.h, b.d]} />
+            <meshStandardMaterial color={idx % 3 === 0 ? "#c7ccd5" : idx % 3 === 1 ? "#aeb6c0" : "#9c8f7d"} roughness={0.95} />
+          </mesh>
+          <mesh castShadow receiveShadow position={[0, b.h + 0.06, 0]}>
+            <boxGeometry args={[b.w * 0.82, 0.18, b.d * 0.82]} />
+            <meshStandardMaterial color="#2f333a" roughness={0.9} />
+          </mesh>
+        </group>
+      ))}
+
+      {lamps.map((l, idx) => (
+        <group key={`lamp-${idx}`} position={[l.x, terrainHeight(l.x, l.z), l.z]}>
+          <mesh castShadow position={[0, 3.5, 0]}>
+            <cylinderGeometry args={[0.05, 0.08, 7, 10]} />
+            <meshStandardMaterial color="#aeb4bb" roughness={0.6} metalness={0.3} />
+          </mesh>
+          <mesh castShadow position={[0.32, 6.9, 0]}>
+            <sphereGeometry args={[0.15, 16, 12]} />
+            <meshStandardMaterial emissive="#ffe9b2" emissiveIntensity={1.1} color="#fff7dd" />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function Vehicle({ keysRef, cameraModeRef, speedRef, gearRef }) {
+  const group = useRef();
+  const body = useRef();
+  const wheelFL = useRef();
+  const wheelFR = useRef();
+  const wheelRL = useRef();
+  const wheelRR = useRef();
+  const steerWheel = useRef();
+  const dashNeedle = useRef();
+  const cameraTarget = useRef(new THREE.Vector3());
+
+  const state = useRef({
+    pos: new THREE.Vector3(0, terrainHeight(0, 0) + 0.8, 0),
+    vel: new THREE.Vector3(),
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    steering: 0,
+    wheelRotation: 0,
+    suspension: 0,
+    airborne: false,
+    camToggle: false,
+    respawnTimer: 0,
+  });
+
+  const carDims = {
+    wheelBase: 2.65,
+    track: 1.55,
+    wheelRadius: 0.36,
+    rideHeight: 0.48,
+  };
+
+  useFrame((root, dtRaw) => {
+    const dt = Math.min(dtRaw, 0.033);
+    const k = keysRef.current;
+    const s = state.current;
+
+    if (k.r) {
+      s.pos.set(0, terrainHeight(0, 0) + 0.9, 0);
+      s.vel.set(0, 0, 0);
+      s.yaw = 0;
+      s.pitch = 0;
+      s.roll = 0;
+      k.r = false;
+    }
+
+    const throttle = (k.w ? 1 : 0) - (k.s && s.vel.length() < 1.5 ? 1 : 0);
+    const brake = k.s && s.vel.length() >= 1.5 ? 1 : 0;
+    const steerInput = (k.a ? 1 : 0) - (k.d ? 1 : 0);
+    const speed = s.vel.length();
+
+    const maxSteer = THREE.MathUtils.degToRad(34) * (1 - clamp(speed / 42, 0, 0.78)) + THREE.MathUtils.degToRad(8);
+    const steerTarget = steerInput * maxSteer;
+    s.steering = lerp(s.steering, steerTarget, 1 - Math.pow(0.0001, dt));
+
+    const forward = new THREE.Vector3(Math.sin(s.yaw), 0, Math.cos(s.yaw));
+    const right = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
+
+    const forwardSpeed = s.vel.dot(forward);
+    const sideSpeed = s.vel.dot(right);
+
+    // Engine / braking / traction model
+    const engineForce = throttle > 0 ? 18.5 : throttle < 0 ? -11.0 : 0;
+    const brakeForce = brake ? 24 : 0;
+    const drag = 0.008 + speed * 0.0005;
+    const rolling = 0.6;
+    const sideGrip = 11.5;
+
+    let newForwardSpeed = forwardSpeed + engineForce * dt;
+    if (brake) {
+      const decel = Math.sign(forwardSpeed) * Math.min(Math.abs(forwardSpeed), brakeForce * dt);
+      newForwardSpeed -= decel;
+    }
+    newForwardSpeed -= newForwardSpeed * drag * dt;
+    newForwardSpeed -= Math.sign(newForwardSpeed) * rolling * dt;
+
+    let newSideSpeed = sideSpeed - sideSpeed * sideGrip * dt;
+    newSideSpeed *= 0.88;
+
+    // Ackermann-ish yaw with speed sensitivity and reverse steering inversion
+    const steerAngle = s.steering;
+    const yawRate = (newForwardSpeed / carDims.wheelBase) * Math.tan(steerAngle) * 0.7;
+    s.yaw += yawRate * dt;
+
+    s.vel.copy(forward).multiplyScalar(newForwardSpeed).add(right.clone().multiplyScalar(newSideSpeed));
+
+    // Stability helpers
+    const lateralKick = clamp(Math.abs(newSideSpeed) * 0.025, 0, 0.4);
+    s.roll = lerp(s.roll, -newSideSpeed * 0.02, 1 - Math.pow(0.003, dt));
+
+    // Move position
+    s.pos.addScaledVector(s.vel, dt);
+
+    // Terrain / suspension / body pitch-roll from wheel samples
+    const wheelOffsets = [$1new THREE.Vector3(-carDims.track / 2, 0, carDims.wheelBase / 2),
+      new THREE.Vector3(carDims.track / 2, 0, carDims.wheelBase / 2),
+      new THREE.Vector3(-carDims.track / 2, 0, -carDims.wheelBase / 2),
+      new THREE.Vector3(carDims.track / 2, 0, -carDims.wheelBase / 2),
+    ];
+    const wheelHeights = wheelOffsets.map((o) => {
+      const local = o.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw);
+      return terrainHeight(s.pos.x + local.x, s.pos.z + local.z);
+    });
+    const avg = wheelHeights.reduce((a, b) => a + b, 0) / wheelHeights.length;
+    const frontAvg = (wheelHeights[0] + wheelHeights[1]) / 2;
+    const rearAvg = (wheelHeights[2] + wheelHeights[3]) / 2;
+    const leftAvg = (wheelHeights[0] + wheelHeights[2]) / 2;
+    const rightAvg = (wheelHeights[1] + wheelHeights[3]) / 2;
+
+    const targetY = avg + carDims.rideHeight + 0.34 + Math.sin(performance.now() * 0.012) * 0.004;
+    s.pos.y = lerp(s.pos.y, targetY, 1 - Math.pow(0.00004, dt));
+    s.pitch = lerp(s.pitch, THREE.MathUtils.clamp((rearAvg - frontAvg) * 0.3, -0.18, 0.18), 1 - Math.pow(0.002, dt));
+    s.roll = lerp(s.roll, THREE.MathUtils.clamp((leftAvg - rightAvg) * 0.3 + s.roll, -0.18, 0.18), 1 - Math.pow(0.002, dt));
+
+    // Soft limits to keep the vehicle in the playable area
+    const limit = 450;
+    if (Math.abs(s.pos.x) > limit || Math.abs(s.pos.z) > limit) {
+      s.pos.x = clamp(s.pos.x, -limit, limit);
+      s.pos.z = clamp(s.pos.z, -limit, limit);
+      s.vel.multiplyScalar(0.2);
+      s.yaw += Math.PI * 0.02;
+    }
+
+    // Update visuals
+    if (group.current) {
+      group.current.position.copy(s.pos);
+      group.current.rotation.set(s.pitch, s.yaw, s.roll);
+    }
+
+    if (wheelFL.current) wheelFL.current.rotation.y = s.steering;
+    if (wheelFR.current) wheelFR.current.rotation.y = s.steering;
+    const wheelSpin = s.vel.length() * dt * 2.9;
+    s.wheelRotation += wheelSpin;
+    if (wheelFL.current) wheelFL.current.rotation.y = s.wheelRotation;
+    if (wheelFR.current) wheelFR.current.rotation.y = s.wheelRotation;
+    if (wheelRL.current) wheelRL.current.rotation.y = s.wheelRotation;
+    if (wheelRR.current) wheelRR.current.rotation.y = s.wheelRotation;
+    if (steerWheel.current) steerWheel.current.rotation.z = -s.steering * 2.7;
+    if (dashNeedle.current) dashNeedle.current.rotation.z = lerp(dashNeedle.current.rotation.z, -clamp(speed * 0.015, 0, 2.45), 0.12);
+
+    speedRef.current = speed * 3.6;
+    gearRef.current = throttle < 0 || forwardSpeed < -0.5 ? "R" : speed < 1 ? "N" : "D";
+
+    // Camera
+    const cam = root.camera;
+    const useFirstPerson = !cameraModeRef.current.thirdPerson;
+    const yawMat = new THREE.Matrix4().makeRotationY(s.yaw);
+    const cockpitOffset = new THREE.Vector3(0, 1.08, 0.62).applyMatrix4(yawMat).add(s.pos);
+    const cockpitLook = new THREE.Vector3(0, 1.15, 8).applyMatrix4(yawMat).add(s.pos);
+    const thirdOffset = new THREE.Vector3(0, 2.6, -7.4).applyMatrix4(yawMat).add(s.pos);
+    const thirdLook = new THREE.Vector3(0, 1.4, 8).applyMatrix4(yawMat).add(s.pos);
+    const targetPos = useFirstPerson ? cockpitOffset : thirdOffset;
+    const targetLook = useFirstPerson ? cockpitLook : thirdLook;
+    cam.position.lerp(targetPos, 1 - Math.pow(0.00002, dt));
+    cameraTarget.current.lerp(targetLook, 1 - Math.pow(0.00002, dt));
+    cam.lookAt(cameraTarget.current);
+  });
+
+  return (
+    <group ref={group}>
+      {/* Wheels */}
+      <mesh ref={wheelFL} castShadow position={[-0.78, -0.28, 1.1]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[carDims.wheelRadius, 0.11, 12, 20]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={1} />
+      </mesh>
+      <mesh ref={wheelFR} castShadow position={[0.78, -0.28, 1.1]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[carDims.wheelRadius, 0.11, 12, 20]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={1} />
+      </mesh>
+      <mesh ref={wheelRL} castShadow position={[-0.78, -0.28, -1.1]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[carDims.wheelRadius, 0.11, 12, 20]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={1} />
+      </mesh>
+      <mesh ref={wheelRR} castShadow position={[0.78, -0.28, -1.1]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[carDims.wheelRadius, 0.11, 12, 20]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={1} />
+      </mesh>
+
+      {/* Chassis */}
+      <mesh ref={body} castShadow receiveShadow position={[0, 0.28, 0]}>
+        <boxGeometry args={[1.92, 0.56, 4.36]} />
+        <meshStandardMaterial color="#171a22" roughness={0.35} metalness={0.55} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0, 0.88, 0.05]}>
+        <boxGeometry args={[1.74, 0.78, 2.0]} />
+        <meshStandardMaterial color="#1f2732" roughness={0.22} metalness={0.45} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0, 0.64, 1.55]} rotation={[-0.2, 0, 0]}>
+        <boxGeometry args={[1.78, 0.38, 1.0]} />
+        <meshStandardMaterial color="#11161e" roughness={0.15} metalness={0.35} transparent opacity={0.9} />
+      </mesh>
+      <mesh castShadow receiveShadow position={[0, 0.58, -1.45]} rotation={[0.08, 0, 0]}>
+        <boxGeometry args={[1.5, 0.38, 0.82]} />
+        <meshStandardMaterial color="#0f1216" roughness={0.15} metalness={0.35} transparent opacity={0.7} />
+      </mesh>
+
+      {/* Interior cabin */}
+      <group position={[0, 0.72, 0.35]}>
+        <mesh castShadow receiveShadow position={[0, -0.12, 0.2]}>
+          <boxGeometry args={[1.46, 0.28, 1.15]} />
+          <meshStandardMaterial color="#19191c" roughness={0.95} />
+        </mesh>
+        <mesh castShadow position={[-0.42, -0.03, -0.08]} rotation={[-0.2, 0, 0]}>
+          <boxGeometry args={[0.36, 0.34, 0.58]} />
+          <meshStandardMaterial color="#202125" roughness={0.9} />
+        </mesh>
+        <mesh castShadow position={[0.42, -0.03, -0.08]} rotation={[-0.2, 0, 0]}>
+          <boxGeometry args={[0.36, 0.34, 0.58]} />
+          <meshStandardMaterial color="#202125" roughness={0.9} />
+        </mesh>
+
+        <group ref={steerWheel} position={[-0.33, 0.05, 0.82]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh castShadow>
+            <torusGeometry args={[0.19, 0.04, 8, 20]} />
+            <meshStandardMaterial color="#181a1d" roughness={0.8} />
+          </mesh>
+          <mesh castShadow position={[0, 0, 0.02]}>
+            <cylinderGeometry args={[0.05, 0.05, 0.12, 12]} />
+            <meshStandardMaterial color="#2c2f35" roughness={0.6} />
+          </mesh>
+        </group>
+
+        <group position={[0.2, -0.01, 0.9]}>
+          <mesh castShadow>
+            <boxGeometry args={[0.9, 0.42, 0.28]} />
+            <meshStandardMaterial color="#101217" roughness={0.92} />
+          </mesh>
+          <mesh ref={dashNeedle} position={[0.0, 0.1, 0.15]}>
+            <coneGeometry args={[0.018, 0.42, 5]} />
+            <meshStandardMaterial color="#ffb547" emissive="#ffb547" emissiveIntensity={0.45} />
+          </mesh>
+        </group>
+
+        <mesh castShadow position={[0, 0.42, -0.48]}>
+          <boxGeometry args={[1.28, 0.48, 0.1]} />
+          <meshStandardMaterial color="#0f1115" roughness={0.95} />
+        </mesh>
+        <mesh castShadow position={[-0.9, 0.32, 0.02]} rotation={[0, 0, 0.18]}>
+          <boxGeometry args={[0.12, 0.85, 0.45]} />
+          <meshStandardMaterial color="#0d0f13" roughness={1} />
+        </mesh>
+        <mesh castShadow position={[0.9, 0.32, 0.02]} rotation={[0, 0, -0.18]}>
+          <boxGeometry args={[0.12, 0.85, 0.45]} />
+          <meshStandardMaterial color="#0d0f13" roughness={1} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+function Scene({ keysRef, cameraModeRef, speedRef, gearRef }) {
+  const ground = useRef();
+  useFrame(() => {
+    if (ground.current) ground.current.rotation.y += 0.0001;
+  });
+
+  return (
+    <>
+      <fog attach="fog" args={["#96b6d8", 90, 650]} />
+      <color attach="background" args={["#8fb0cf"]} />
+      <Sky sunPosition={[100, 35, 100]} turbidity={7} rayleigh={1.8} mieCoefficient={0.008} mieDirectionalG={0.8} />
+
+      <ambientLight intensity={0.46} />
+      <directionalLight
+        castShadow
+        position={[120, 180, 80]}
+        intensity={2.5}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-left={-260}
+        shadow-camera-right={260}
+        shadow-camera-top={260}
+        shadow-camera-bottom={-260}
+        shadow-camera-far={520}
+      />
+      <hemisphereLight intensity={0.55} groundColor="#2d3328" skyColor="#cfe6ff" />
+
+      <group ref={ground}>
+        <RoadNetwork />
+        <Props />
+      </group>
+
+      <Vehicle keysRef={keysRef} cameraModeRef={cameraModeRef} speedRef={speedRef} gearRef={gearRef} />
+    </>
+  );
+}
+
+export default function RealisticCarSimulatorPrototype() {
+  const { keysRef, bindButton } = useKeyboardAndTouchState();
+  const speedRef = useRef(0);
+  const gearRef = useRef("N");
+  const cameraModeRef = useRef({ thirdPerson: false });
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const i = setInterval(() => setTick((n) => n + 1), 100);
+    return () => clearInterval(i);
+  }, []);
+
+  return (
+    <div className="relative w-full h-screen overflow-hidden bg-black select-none touch-none">
+      <Canvas shadows gl={{ antialias: true, physicallyCorrectLights: true }} camera={{ position: [0, 1.6, 4.8], fov: 72 }}>
+        <Scene keysRef={keysRef} cameraModeRef={cameraModeRef} speedRef={speedRef} gearRef={gearRef} />
+      </Canvas>
+
+      {/* HUD */}
+      <div className="pointer-events-none absolute left-0 top-0 p-4 text-white">
+        <div className="rounded-2xl bg-black/35 px-4 py-3 backdrop-blur-md shadow-lg border border-white/10">
+          <div className="text-xs uppercase tracking-[0.3em] text-white/65">Realistic Car Simulator Prototype</div>
+          <div className="mt-2 flex items-end gap-4">
+            <div>
+              <div className="text-4xl font-semibold leading-none">{speedRef.current.toFixed(0)}</div>
+              <div className="text-sm text-white/70">km/h</div>
+            </div>
+            <div>
+              <div className="text-xl font-semibold">Gear {gearRef.current}</div>
+              <div className="text-sm text-white/70">First-person cockpit enabled</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Touch controls */}
+      <div className="absolute inset-x-0 bottom-0 p-3 text-white md:hidden">
+        <div className="flex items-end justify-between gap-3">
+          <div className="grid grid-cols-3 gap-2 w-40">
+            <div />
+            <button {...bindButton("w", true)} className="rounded-2xl bg-white/10 py-4 text-xl backdrop-blur-md active:bg-white/25">▲</button>
+            <div />
+            <button {...bindButton("a", true)} className="rounded-2xl bg-white/10 py-4 text-xl backdrop-blur-md active:bg-white/25">◀</button>
+            <button
+              onPointerDown={(e) => {
+                e.preventDefault();
+                cameraModeRef.current.thirdPerson = !cameraModeRef.current.thirdPerson;
+                setTick((n) => n + 1);
+              }}
+              className="rounded-2xl bg-white/10 py-4 text-sm backdrop-blur-md active:bg-white/25"
+            >
+              CAM
+            </button>
+            <button {...bindButton("d", true)} className="rounded-2xl bg-white/10 py-4 text-xl backdrop-blur-md active:bg-white/25">▶</button>
+            <div />
+            <button {...bindButton("s", true)} className="rounded-2xl bg-white/10 py-4 text-xl backdrop-blur-md active:bg-white/25">▼</button>
+            <div />
+          </div>
+
+          <div className="flex gap-2">
+            <button {...bindButton("space", true)} className="rounded-2xl bg-red-500/65 px-4 py-5 font-semibold backdrop-blur-md active:bg-red-500/85">
+              BRAKE
+            </button>
+            <button
+              onPointerDown={(e) => {
+                e.preventDefault();
+                keysRef.current.r = true;
+              }}
+              className="rounded-2xl bg-amber-400/70 px-4 py-5 font-semibold text-black backdrop-blur-md active:bg-amber-400"
+            >
+              RESET
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop hint */}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/35 px-4 py-2 text-xs text-white/80 backdrop-blur-md border border-white/10 hidden md:block">
+        W/A/S/D or arrows · Space = brake · C = camera · R = reset
+      </div>
+
+      <button
+        onClick={() => {
+          cameraModeRef.current.thirdPerson = !cameraModeRef.current.thirdPerson;
+          setTick((n) => n + 1);
+        }}
+        className="absolute right-4 top-4 rounded-2xl border border-white/10 bg-black/35 px-4 py-2 text-sm text-white backdrop-blur-md hover:bg-black/50"
+      >
+        Toggle Camera
+      </button>
+    </div>
+  );
+}
